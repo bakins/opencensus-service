@@ -12,6 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package collector
+package jaegerreceiver
 
-// TODO: Delete me when tests are added.
+import (
+	"github.com/census-instrumentation/opencensus-service/internal/configmodels"
+)
+
+// ConfigV2 defines configuration for Jaeger receiver.
+type ConfigV2 struct {
+	Protocols map[string]*configmodels.ReceiverSettings `mapstructure:"protocols"`
+}

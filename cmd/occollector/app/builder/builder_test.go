@@ -143,39 +143,39 @@ func TestTailSamplingPoliciesConfiguration(t *testing.T) {
 	wCfg.Mode = TailSampling
 	wCfg.Policies = []*PolicyCfg{
 		{
-			Name:      "string-tag-filter1",
-			Type:      StringTagFilter,
+			Name:      "string-attribute-filter1",
+			Type:      StringAttributeFilter,
 			Exporters: []string{"jaeger1"},
-			Configuration: &StringTagFilterCfg{
-				Tag:    "test",
+			Configuration: &StringAttributeFilterCfg{
+				Key:    "test",
 				Values: []string{"value 1", "value 2"},
 			},
 		},
 		{
-			Name:      "numeric-tag-filter2",
-			Type:      NumericTagFilter,
+			Name:      "numeric-attribute-filter2",
+			Type:      NumericAttributeFilter,
 			Exporters: []string{"jaeger2"},
-			Configuration: &NumericTagFilterCfg{
-				Tag:      "http.status_code",
+			Configuration: &NumericAttributeFilterCfg{
+				Key:      "http.status_code",
 				MinValue: 400,
 				MaxValue: 999,
 			},
 		},
 		{
-			Name:      "string-tag-filter3",
-			Type:      StringTagFilter,
+			Name:      "string-attribute-filter3",
+			Type:      StringAttributeFilter,
 			Exporters: []string{"jaeger3"},
-			Configuration: &StringTagFilterCfg{
-				Tag:    "test.different",
+			Configuration: &StringAttributeFilterCfg{
+				Key:    "test.different",
 				Values: []string{"key 1", "key 2"},
 			},
 		},
 		{
-			Name:      "numeric-tag-filter4",
-			Type:      NumericTagFilter,
+			Name:      "numeric-attribute-filter4",
+			Type:      NumericAttributeFilter,
 			Exporters: []string{"jaeger4", "jaeger5"},
-			Configuration: &NumericTagFilterCfg{
-				Tag:      "http.status_code",
+			Configuration: &NumericAttributeFilterCfg{
+				Key:      "http.status_code",
 				MinValue: 400,
 				MaxValue: 999,
 			},
@@ -209,6 +209,36 @@ func TestTailSamplingConfig(t *testing.T) {
 	gCfg := NewDefaultTailBasedCfg().InitFromViper(v)
 	if !reflect.DeepEqual(gCfg, wCfg) {
 		t.Fatalf("Wanted %+v but got %+v", *wCfg, *gCfg)
+	}
+}
+
+func TestOpencensusReceiverKeepaliveSettings(t *testing.T) {
+	v, err := loadViperFromFile("./testdata/oc_keepalive_config.yaml")
+	if err != nil {
+		t.Fatalf("Failed to load viper from test file: %v", err)
+	}
+
+	wCfg := NewDefaultOpenCensusReceiverCfg()
+	wCfg.Keepalive = &serverParametersAndEnforcementPolicy{
+		ServerParameters: &keepaliveServerParameters{
+			Time:    30 * time.Second,
+			Timeout: 5 * time.Second,
+		},
+		EnforcementPolicy: &keepaliveEnforcementPolicy{
+			MinTime:             10 * time.Second,
+			PermitWithoutStream: true,
+		},
+	}
+
+	gCfg, err := NewDefaultOpenCensusReceiverCfg().InitFromViper(v)
+	if err != nil {
+		t.Fatalf("got '%v', want nil", err)
+	}
+	if !reflect.DeepEqual(*gCfg.Keepalive.ServerParameters, *wCfg.Keepalive.ServerParameters) {
+		t.Fatalf("Wanted ServerParameters %+v but got %+v", *wCfg.Keepalive.ServerParameters, *gCfg.Keepalive.ServerParameters)
+	}
+	if !reflect.DeepEqual(*gCfg.Keepalive.EnforcementPolicy, *wCfg.Keepalive.EnforcementPolicy) {
+		t.Fatalf("Wanted EnforcementPolicy %+v but got %+v", *wCfg.Keepalive.EnforcementPolicy, *gCfg.Keepalive.EnforcementPolicy)
 	}
 }
 

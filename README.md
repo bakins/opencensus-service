@@ -1,5 +1,9 @@
 # OpenCensus Service
 
+*IMPORTANT:* This project is now in __maintenance mode__: only bug/security/dependency PRs will be accepted and published.
+
+Development of new features and improvements will be done on its successor project: [__OpenTelemetry Service__](https://github.com/open-telemetry/opentelemetry-service/). 
+
 [![Build Status][travis-image]][travis-url]
 [![GoDoc][godoc-image]][godoc-url]
 [![Gitter chat][gitter-image]][gitter-url]
@@ -19,7 +23,7 @@
 - [OpenCensus Agent](#opencensus-agent)
     - [Usage](#agent-usage)
 - [OpenCensus Collector](#opencensus-collector)
-    - [Global Tags](#global-tags)
+    - [Global Attributes](#global-attributes)
     - [Intelligent Sampling](#tail-sampling)
     - [Usage](#collector-usage)
 
@@ -156,6 +160,7 @@ exporters:
     compression: "gzip"
     cert-pem-file: "server_ca_public.pem" # optional to enable TLS
     endpoint: "127.0.0.1:55678"
+    reconnection-delay: 2s
 
   jaeger:
     collector_endpoint: "http://127.0.0.1:14268/api/traces"
@@ -184,7 +189,7 @@ exporters:
 
 ### <a name="config-diagnostics"></a>Diagnostics
 
-zPages is provided for monitoring. Today, the OpenCensus Agent is configured with zPages running by default on port ``55679``.
+zPages is provided for monitoring running by default on port ``55679``.
 These routes below contain the various diagnostic resources:
 
 Resource|Route
@@ -217,7 +222,7 @@ zpages:
 The ocagent can be run directly from sources, binary, or a Docker image. If you are planning to run from sources or build
 on your machine start by cloning the repo using `go get -d github.com/census-instrumentation/opencensus-service`.
 
-The minimum Go version required for this project is Go 1.11.4. In addition, you must manually install [Bazaar](https://github.com/census-instrumentation/opencensus-service/blob/master/CONTRIBUTING.md#required-tools)
+The minimum Go version required for this project is Go 1.12.5. In addition, you must manually install [Bazaar](https://github.com/census-instrumentation/opencensus-service/blob/master/CONTRIBUTING.md#required-tools)
 
 1. Run from sources:
 
@@ -275,11 +280,19 @@ The collector also serves as a control plane for agents/clients by supplying
 them updated configuration (e.g. trace sampling policies), and reporting
 agent/client health information/inventory metadata to downstream exporters.
 
-### <a name="global-tags"></a> Global Tags
+### <a name="receivers-configuration"></a> Receivers Configuration
 
-The collector also takes some global configurations that modify its behavior for all receivers / exporters. One of the configurations
-available is to add Attributes or Tags to all spans passing through this collector. These additional tags can be configured to either overwrite
-attributes if they already exists on the span, or respect the original values. An example of this is provided below.
+For detailed information about configuring receivers for the collector refer to the [receivers README.md](receiver/README.md).
+
+### <a name="global-attributes"></a> Global Attributes
+
+The collector also takes some global configurations that modify its behavior for all receivers / exporters. 
+
+1. Add Attributes to all spans passing through this collector. These additional attributes can be configured to either overwrite existing keys if they already exist on the span, or respect the original values.
+2. The key of each attribute can also be mapped to different strings using the `key-mapping` configuration. The key matching is case sensitive.
+
+An example using these configurations of this is provided below.
+
 ```yaml
 global:
   attributes:
@@ -290,6 +303,37 @@ global:
       some_int: 1234
       some_float: 3.14159
       some_bool: false
+    key-mapping:
+      # key-mapping is used to replace the attribute key with different keys
+      - key: servertracer.http.responsecode
+        replacement: http.status_code
+      - key:  servertracer.http.responsephrase
+        replacement: http.message
+        overwrite: true # replace attribute key even if the replacement string is already a key on the span attributes
+        keep: true # keep the attribute with the original key
+```
+
+### <a name="probabilistic-trace-sampling"></a>Probabilistic Head-based Trace Sampling
+
+In some scenarios it may be desirable to perform probabilistic head-based trace sampling on the collector.
+This can be done using by specifying `probabilistic` policy secion under the `sampling` section of the collector configuration file.
+
+```yaml
+sampling:
+  # mode indicates if the sampling is head or tail based. For probabilistic the mode is head-based.
+  mode: head
+  policies:
+    # section below defines a probabilistic trace sampler based on hashing the trace ID associated to
+    # each span and sampling the span according to the given spans.
+    probabilistic:
+      configuration:
+        # sampling-percentage is the percentage of sampling to be applied to all spans, unless their service is specified
+        # on sampling-percentage.
+        sampling-percentage: 5
+        # hash-seed allows choosing the seed for the hash function used in the trace sampling. This is important when
+        # multiple layers of collectors are being used with head sampling, in such scenarios make sure to
+        # choose different seeds for each layer.
+        hash-seed: 1
 ```
 
 ### <a name="tail-sampling"></a>Intelligent Sampling
@@ -303,22 +347,22 @@ sampling:
   num-traces: 10000
   policies:
     # user-defined policy name
-    my-string-tag-filter:
+    my-string-attribute-filter:
       # exporters the policy applies to
       exporters:
         - jaeger
-      policy: string-tag-filter
+      policy: string-attribute-filter
       configuration:
-        tag: tag1
+        key: key1
         values:
           - value1
           - value2
-    my-numeric-tag-filter:
+    my-numeric-attribute-filter:
       exporters:
         - zipkin
-      policy: numeric-tag-filter
+      policy: numeric-attribute-filter
       configuration:
-        tag: tag1
+        key: key1
         min-value: 0
         max-value: 100
 ```
@@ -332,7 +376,7 @@ sampling:
 The collector can be run directly from sources, binary, or a Docker image. If you are planning to run from sources or build
 on your machine start by cloning the repo using `go get -d github.com/census-instrumentation/opencensus-service`.
 
-The minimum Go version required for this project is Go 1.11.4.
+The minimum Go version required for this project is Go 1.12.5.
 
 1. Run from sources:
 ```shell
@@ -385,7 +429,7 @@ Sample configuration file:
 log-level: DEBUG
 
 receivers:
-  opencensus: {} # Runs OpenCensus receiver with default configuration (default behavior)
+  opencensus: {} # Runs OpenCensus receiver with default configuration (default behavior).
 
 queued-exporters:
   jaeger-sender-test: # A friendly name for the exporter

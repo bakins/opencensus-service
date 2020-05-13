@@ -33,7 +33,9 @@ import (
 	"github.com/census-instrumentation/opencensus-service/internal/collector/sampling"
 	"github.com/census-instrumentation/opencensus-service/internal/config"
 	"github.com/census-instrumentation/opencensus-service/processor/addattributesprocessor"
+	"github.com/census-instrumentation/opencensus-service/processor/attributekeyprocessor"
 	"github.com/census-instrumentation/opencensus-service/processor/multiconsumer"
+	"github.com/census-instrumentation/opencensus-service/processor/tracesamplerprocessor"
 )
 
 func createExporters(v *viper.Viper, logger *zap.Logger) ([]func(), []consumer.TraceConsumer, []consumer.MetricsConsumer) {
@@ -176,12 +178,12 @@ func buildSamplingProcessor(cfg *builder.SamplingCfg, nameToTraceConsumer map[st
 		switch polCfg.Type {
 		case builder.AlwaysSample:
 			policy.Evaluator = sampling.NewAlwaysSample()
-		case builder.NumericTagFilter:
-			numTagFilterCfg := polCfg.Configuration.(*builder.NumericTagFilterCfg)
-			policy.Evaluator = sampling.NewNumericTagFilter(numTagFilterCfg.Tag, numTagFilterCfg.MinValue, numTagFilterCfg.MaxValue)
-		case builder.StringTagFilter:
-			strTagFilterCfg := polCfg.Configuration.(*builder.StringTagFilterCfg)
-			policy.Evaluator = sampling.NewStringTagFilter(strTagFilterCfg.Tag, strTagFilterCfg.Values)
+		case builder.NumericAttributeFilter:
+			numAttributeFilterCfg := polCfg.Configuration.(*builder.NumericAttributeFilterCfg)
+			policy.Evaluator = sampling.NewNumericAttributeFilter(numAttributeFilterCfg.Key, numAttributeFilterCfg.MinValue, numAttributeFilterCfg.MaxValue)
+		case builder.StringAttributeFilter:
+			strAttributeFilterCfg := polCfg.Configuration.(*builder.StringAttributeFilterCfg)
+			policy.Evaluator = sampling.NewStringAttributeFilter(strAttributeFilterCfg.Key, strAttributeFilterCfg.Values)
 		case builder.RateLimiting:
 			rateLimitingCfg := polCfg.Configuration.(*builder.RateLimitingCfg)
 			policy.Evaluator = sampling.NewRateLimiting(rateLimitingCfg.SpansPerSecond)
@@ -280,7 +282,12 @@ func startProcessor(v *viper.Viper, logger *zap.Logger) (consumer.TraceConsumer,
 
 	var tailSamplingProcessor consumer.TraceConsumer
 	samplingProcessorCfg := builder.NewDefaultSamplingCfg().InitFromViper(v)
-	if samplingProcessorCfg.Mode == builder.TailSampling {
+	useHeadSamplingProcessor := false
+	if samplingProcessorCfg.Mode == builder.HeadSampling {
+		// Head-sampling should be the first processor in the pipeline to avoid global operations on data
+		// that is not going to be sampled, for now just set a flag to added the sampler later.
+		useHeadSamplingProcessor = true
+	} else if samplingProcessorCfg.Mode == builder.TailSampling {
 		var err error
 		tailSamplingProcessor, err = buildSamplingProcessor(samplingProcessorCfg, nameToTraceConsumer, v, logger)
 		if err != nil {
@@ -310,18 +317,46 @@ func startProcessor(v *viper.Viper, logger *zap.Logger) (consumer.TraceConsumer,
 	}
 
 	// Wraps processors in a single one to be connected to all enabled receivers.
+	tp := multiconsumer.NewTraceProcessor(traceConsumers)
 	if multiProcessorCfg.Global != nil && multiProcessorCfg.Global.Attributes != nil {
 		logger.Info(
 			"Found global attributes config",
 			zap.Bool("overwrite", multiProcessorCfg.Global.Attributes.Overwrite),
 			zap.Any("values", multiProcessorCfg.Global.Attributes.Values),
+			zap.Any("key-mapping", multiProcessorCfg.Global.Attributes.KeyReplacements),
 		)
-		tp, _ := addattributesprocessor.NewTraceProcessor(
-			multiconsumer.NewTraceProcessor(traceConsumers),
-			addattributesprocessor.WithAttributes(multiProcessorCfg.Global.Attributes.Values),
-			addattributesprocessor.WithOverwrite(multiProcessorCfg.Global.Attributes.Overwrite),
-		)
-		return tp, closeFns
+
+		if len(multiProcessorCfg.Global.Attributes.Values) > 0 {
+			tp, _ = addattributesprocessor.NewTraceProcessor(
+				tp,
+				addattributesprocessor.WithAttributes(multiProcessorCfg.Global.Attributes.Values),
+				addattributesprocessor.WithOverwrite(multiProcessorCfg.Global.Attributes.Overwrite),
+			)
+		}
+		if len(multiProcessorCfg.Global.Attributes.KeyReplacements) > 0 {
+			tp, _ = attributekeyprocessor.NewTraceProcessor(tp, multiProcessorCfg.Global.Attributes.KeyReplacements...)
+		}
 	}
-	return multiconsumer.NewTraceProcessor(traceConsumers), closeFns
+
+	if useHeadSamplingProcessor {
+		vTraceSampler := v.Sub("sampling.policies.probabilistic.configuration")
+		if vTraceSampler == nil {
+			logger.Error("Trace head-based sampling mode is enabled but there is no valid policy section defined")
+			os.Exit(1)
+		}
+
+		cfg := &tracesamplerprocessor.TraceSamplerCfg{}
+		samplerCfg, err := cfg.InitFromViper(vTraceSampler)
+		if err != nil {
+			logger.Error("Trace head-based sampling configuration error", zap.Error(err))
+			os.Exit(1)
+		}
+		logger.Info(
+			"Trace head-sampling enabled",
+			zap.Float32("sampling-percentage", samplerCfg.SamplingPercentage),
+		)
+		tp, _ = tracesamplerprocessor.NewTraceProcessor(tp, *samplerCfg)
+	}
+
+	return tp, closeFns
 }

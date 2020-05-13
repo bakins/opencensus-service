@@ -23,23 +23,23 @@ sampling:
       policy: rate-limiting
       configuration:
         spans-per-second: 1000
-    my-string-tag-filter:
+    my-string-attribute-filter:
       exporters:
         - jaeger
         - omnition
-      policy: string-tag-filter
+      policy: string-attribute-filter
       configuration:
-        tag: tag1
+        key: key1
         values:
           - value1
           - value2
-    my-numeric-tag-filter:
+    my-numeric-attribute-filter:
       exporters:
         - jaeger
         - omnition
-      policy: numeric-tag-filter
+      policy: numeric-attribute-filter
       configuration:
-        tag: tag1
+        key: key1
         min-value: 0
         max-value: 100
     my-always-sample:
@@ -85,7 +85,18 @@ queued-exporters:
     exporters:
       opencensus:
         endpoint: "127.0.0.1:55566"
+        cert-pem-file: "server_ca_public.pem" # PEM file used to enable TLS. For trusted CAs from
+                                              # system pool use "secure:" setting, see below.
         compression: "gzip"
+        reconnection-dealy: 2s # Delay (+70% jitter) before reconnection attempt in case of error.
+        secure: true # Used to export to destinations trusted by certificates from the system pool.
+                     # "cert-pem-file:" takes precedence over this setting.
+        keepalive:
+          # Keepalive settings for gRPC clients, see https://godoc.org/google.golang.org/grpc/keepalive#ClientParameters.
+          # Recommended to be set for cases that need to support bursts of data and periods of inactivity.
+          time: 30s # After inactive for this amount to time client will send a ping to the server.
+          timeout: 5s # Amount of time that client waits for a keepalive ping response before closing the connection.
+          permit-without-stream: true # Permits the keepalive ping even if no RPCs are in use, if false no ping is sent.
   my-org-jaeger: # A second processor with its own configuration options
     num-workers: 2
     queue-size: 100
