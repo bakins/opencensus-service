@@ -38,10 +38,12 @@ import (
 const agentLabel = "g.co/agent"
 
 type stackdriverConfig struct {
-	ProjectID     string `mapstructure:"project,omitempty"`
-	EnableTracing bool   `mapstructure:"enable_tracing,omitempty"`
-	EnableMetrics bool   `mapstructure:"enable_metrics,omitempty"`
-	MetricPrefix  string `mapstructure:"metric_prefix,omitempty"`
+	ProjectID                string `mapstructure:"project,omitempty"`
+	EnableTracing            bool   `mapstructure:"enable_tracing,omitempty"`
+	EnableMetrics            bool   `mapstructure:"enable_metrics,omitempty"`
+	MetricPrefix             string `mapstructure:"metric_prefix,omitempty"`
+	BundleDelayThreshold     string `mapstructure:bundle_delay_threshold,omitempty"`
+	TraceSpansBufferMaxBytes int    `mapstructure:tarce_buffer_bytes,omitempty"`
 }
 
 // This interface and factory function type enable passing a fake Stackdriver
@@ -85,6 +87,23 @@ func stackdriverTraceExportersFromViperInternal(v *viper.Viper, sef stackdriverE
 		return nil, nil, nil, nil
 	}
 
+	// Stackdriver Metrics mandates a minimum of 60 seconds for
+	// reporting metrics. We have to enforce this as per the advisory
+	// at https://cloud.google.com/monitoring/custom-metrics/creating-metrics#writing-ts
+	// which says:
+	//
+	// "If you want to write more than one point to the same time series, then use a separate call
+	//  to the timeSeries.create method for each point. Don't make the calls faster than one time per
+	//  minute. If you are adding data points to different time series, then there is no rate limitation."
+	bundleDelayThreshold := 61 * time.Second
+	if sc.BundleDelayThreshold != "" {
+		t, err := time.ParseDuration(sc.BundleDelayThreshold)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		bundleDelayThreshold = t
+	}
+
 	// TODO:  For each ProjectID, create a different exporter
 	// or at least a unique Stackdriver client per ProjectID.
 
@@ -95,15 +114,9 @@ func stackdriverTraceExportersFromViperInternal(v *viper.Viper, sef stackdriverE
 
 		MetricPrefix: sc.MetricPrefix,
 
-		// Stackdriver Metrics mandates a minimum of 60 seconds for
-		// reporting metrics. We have to enforce this as per the advisory
-		// at https://cloud.google.com/monitoring/custom-metrics/creating-metrics#writing-ts
-		// which says:
-		//
-		// "If you want to write more than one point to the same time series, then use a separate call
-		//  to the timeSeries.create method for each point. Don't make the calls faster than one time per
-		//  minute. If you are adding data points to different time series, then there is no rate limitation."
-		BundleDelayThreshold: 61 * time.Second,
+		BundleDelayThreshold: bundleDelayThreshold,
+
+		TraceSpansBufferMaxBytes: sc.TraceSpansBufferMaxBytes,
 	})
 	if serr != nil {
 		return nil, nil, nil, fmt.Errorf("Cannot configure Stackdriver Trace exporter: %v", serr)
